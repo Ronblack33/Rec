@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tester Oxylabs Proxy (Netlify)</title>
+<style>
+  body{background:#0d1117;color:#e6edf3;font-family:system-ui,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:0;padding:16px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:14px;padding:16px;max-width:800px;margin:0 auto}
+  input,button,select{width:100%;padding:12px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3}
+  button{background:#238636;border-color:#238636;font-weight:600;margin-top:8px}
+  .row{display:grid;gap:8px}
+  .small{color:#9fb3c8;font-size:12px}
+  pre{white-space:pre-wrap;background:#0d1117;border:1px dashed #30363d;padding:10px;border-radius:10px;max-height:240px;overflow:auto}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h2>Tester Oxylabs Proxy (Netlify Function)</h2>
+    <div class="row">
+      <input id="url" placeholder="Pega aquí tu URL (playlist.m3u8 o canal)">
+      <select id="method">
+        <option value="head">HEAD (rápido)</option>
+        <option value="get">GET (descarga contenido)</option>
+      </select>
+      <input id="ua" placeholder='User-Agent (opcional)' value="Mozilla/5.0 (Windows NT 10.0)">
+      <input id="referer" placeholder="Referer (opcional)" value="https://google.com">
+      <button id="btn">Probar por Oxylabs</button>
+      <div class="small">La función serverless sale por tu proxy Oxylabs y devuelve el resultado con CORS abierto.</div>
+      <pre id="out">Sin ejecutar…</pre>
+    </div>
+  </div>
+
+<script>
+document.getElementById('btn').addEventListener('click', async () => {
+  const base = location.origin.replace(/\/$/, '');
+  const url = document.getElementById('url').value.trim();
+  const method = document.getElementById('method').value;
+  const ua = encodeURIComponent(document.getElementById('ua').value.trim());
+  const referer = encodeURIComponent(document.getElementById('referer').value.trim());
+
+  if(!url){ alert('Ingresa una URL'); return; }
+
+  const endpoint = `${base}/.netlify/functions/proxy?url=${encodeURIComponent(url)}&method=${method}&ua=${ua}&referer=${referer}`;
+  const out = document.getElementById('out');
+  out.textContent = `→ ${endpoint}\n\nEjecutando…`;
+
+  try{
+    const res = await fetch(endpoint);
+    const ct = res.headers.get('content-type') || '';
+    if(method === 'head'){
+      const json = await res.json();
+      out.textContent = `Status: ${json.status}\nContent-Type: ${json.headers?.['content-type'] || '(desconocido)'}\n\nHeaders:\n` + JSON.stringify(json.headers, null, 2);
+    }else{
+      // GET: no mostramos binario, solo headers + primeras bytes
+      const buf = await res.arrayBuffer();
+      const bytes = new Uint8Array(buf).slice(0, 128);
+      out.textContent = `Status: ${res.status}\nContent-Type: ${ct}\nBytes recibidos: ${buf.byteLength}\nPrimeros 128 bytes (hex):\n` + Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join(' ');
+    }
+  }catch(e){
+    out.textContent = 'Error: ' + (e && e.message || e);
+  }
+});
+</script>
+</body>
+</html>
