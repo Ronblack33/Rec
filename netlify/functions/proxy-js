@@ -1,0 +1,99 @@
+// netlify/functions/proxy.js
+const axios = require("axios");
+const qs = require("node:querystring");
+
+exports.handler = async (event) => {
+  // CORS preflight
+  if (event.httpMethod === "OPTIONS") {
+    return {
+      statusCode: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type, *",
+        "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS",
+        "Access-Control-Max-Age": "86400"
+      }
+    };
+  }
+
+  try {
+    const q = event.queryStringParameters || {};
+    const target = q.url || "";
+    if (!target) {
+      return { statusCode: 400, body: "Falta ?url=" };
+    }
+
+    // Opcionales: method=head para chequeo rápido, ua, referer, timeout (ms)
+    const method = (q.method || "get").toLowerCase(); // "get" | "head"
+    const ua = q.ua || event.headers["user-agent"] || "Mozilla/5.0";
+    const referer = q.referer || "https://google.com";
+    const timeout = Math.min(parseInt(q.timeout || "20000", 10), 30000); // máx 30s
+
+    const OXY_HOST = process.env.OXY_HOST || "dc.oxylabs.io";
+    const OXY_PORT = Number(process.env.OXY_PORT || "8000");
+    const OXY_USER = process.env.OXY_USER;
+    const OXY_PASS = process.env.OXY_PASS;
+
+    if (!OXY_USER || !OXY_PASS) {
+      return { statusCode: 500, body: "Credenciales del proxy no configuradas" };
+    }
+
+    const headers = {
+      "User-Agent": ua,
+      "Accept": "*/*",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Referer": referer,
+      // "Origin": "https://tu-dominio.netlify.app" // si algún server lo exige
+    };
+
+    // Para GET usamos arraybuffer (playlist/canales HLS); HEAD no devuelve body
+    const axiosCfg = {
+      url: target,
+      method,
+      responseType: method === "get" ? "arraybuffer" : "json",
+      timeout,
+      headers,
+      maxRedirects: 5,
+      validateStatus: () => true,
+      proxy: {
+        protocol: "http",
+        host: OXY_HOST,
+        port: OXY_PORT,
+        auth: { username: OXY_USER, password: OXY_PASS }
+      }
+    };
+
+    let resp = await axios(axiosCfg);
+
+    // Si pediste HEAD y el server no lo soporta (405/501), probamos GET ligero (byte 0)
+    if (method === "head" && (resp.status === 405 || resp.status === 501)) {
+      resp = await axios({
+        ...axiosCfg,
+        method: "get",
+        responseType: "arraybuffer",
+        headers: { ...headers, Range: "bytes=0-0" }
+      });
+    }
+
+    const contentType = resp.headers?.["content-type"] || "application/octet-stream";
+
+    // Responder
+    return {
+      statusCode: resp.status || 200,
+      headers: {
+        "Content-Type": contentType,
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Expose-Headers": "Content-Type,Content-Length",
+        "Cache-Control": "no-store"
+      },
+      body:
+        method === "get"
+          ? Buffer.from(resp.data || "").toString("base64")
+          : JSON.stringify({ status: resp.status, headers: resp.headers }),
+      isBase64Encoded: method === "get"
+    };
+  } catch (err) {
+    const msg = (err && err.message) || "Proxy error";
+    return { statusCode: 502, body: `Proxy failed: ${msg}` };
+  }
+};
